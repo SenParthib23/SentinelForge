@@ -1,0 +1,79 @@
+services:
+  # === MESSAGE BROKER ===
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: sf-zookeeper
+    ports: ["2181:2181"]
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: sf-kafka
+    depends_on:
+      - zookeeper
+    ports: ["9092:9092"]
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+  # === DATABASES ===
+  postgres:
+    image: postgres:15-alpine
+    container_name: sf-postgres
+    ports: ["5433:5432"]  # Port 5433 avoids conflict with MAOP on 5432
+    environment:
+      POSTGRES_DB: sentinelforge
+      POSTGRES_USER: sf_user
+      POSTGRES_PASSWORD: sf_secret_dev
+    volumes:
+      - sf-pg-data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  redis:
+    image: redis:7-alpine
+    container_name: sf-redis
+    ports: ["6380:6379"]  # Port 6380 avoids conflict with MAOP on 6379
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+
+  # === MODEL REGISTRY ===
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.14.0
+    container_name: sf-mlflow
+    ports: ["5001:5000"]  # Port 5001 avoids conflict with default 5000
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri postgresql://sf_user:sf_secret_dev@postgres:5432/sentinelforge
+      --default-artifact-root /mlflow/artifacts
+    depends_on:
+      - postgres
+    volumes:
+      - sf-mlflow-data:/mlflow/artifacts
+
+  # === OBSERVABILITY ===
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: sf-prometheus
+    ports: ["9091:9090"]  # Port 9091 avoids conflict with default 9090
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: sf-grafana
+    ports: ["3002:3000"]  # Port 3002 avoids conflict with default 3000
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - sf-grafana-data:/var/lib/grafana
+
+volumes:
+  sf-pg-data:
+  sf-mlflow-data:
+  sf-grafana-data:
