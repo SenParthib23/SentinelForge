@@ -238,6 +238,82 @@ sequenceDiagram
 | `[0.60, 0.85)` | **HIGH** | **FLAG** | Dispatch to Kafka `case.flagged` for LLM narrative |
 | `[0.85, 1.00]` | **CRITICAL** | **FLAG** | Dispatch to Kafka `case.flagged` with `URGENT` priority |
 
+### 3.5 Layer 4: LLM Investigation Narrative Assist
+
+When transactions are flagged by the real-time scoring engine (risk score $\ge 0.60$), they are routed asynchronously off the critical authorization path to the Investigation Assist pipeline.
+
+```mermaid
+flowchart TD
+    subgraph Trigger["1. Asynchronous Trigger"]
+        K[Kafka: case.flagged]
+    end
+
+    subgraph Enrich["2. 360-Degree Context Assembly"]
+        CB[CaseBuilder Engine]
+        DB[(Postgres Audit Logs)]
+        GR[Bipartite Identity Graph]
+        OFS[(Redis Online Store)]
+        
+        K --> CB
+        DB -->|Customer History & Baseline| CB
+        GR -->|Linked Accounts & Devices| CB
+        OFS -->|Raw Feature Snapshot| CB
+    end
+
+    subgraph LLM["3. Evidence-Grounded Generation"]
+        CB -->|Context Bundle JSON| AG[InvestigationAgent]
+        AG -->|System Prompt & Grounding Rules| GQ[Groq API: Llama-3-8B]
+        GQ -->|Raw Narrative with Citations| EG{EvidenceGroundingVerifier}
+    end
+
+    subgraph Verification["4. Verification & Storage"]
+        EG -->|Fidelity Score >= 0.80| OK[Verified Narrative]
+        EG -->|Fidelity Score < 0.80| FBK[Deterministic Fallback]
+        OK & FBK --> CAS[(Postgres: fraud_cases)]
+        CAS --> UI[Analyst Dashboard SSE]
+    end
+```
+
+#### Grounding Verification Formulation
+For every generated narrative, the `EvidenceGroundingVerifier` extracts bracketed citations $[Citing: \text{key}=\text{value}]$ and checks numerical proximity within a $10\%$ tolerance against the raw JSON context bundle:
+$$\text{Fidelity Score} = \frac{\sum_{i=1}^{M} \mathbb{I}(\text{claim}_i \in \text{Context Bundle})}{M}$$
+### 3.6 Layer 5 & 6: FastAPI Gateway & SSE Analyst Dashboard
+
+The API layer is built on FastAPI and acts as the central orchestrator connecting payment rails, human investigators, and model management tools.
+
+```mermaid
+flowchart TD
+    subgraph Clients["Inbound Traffic"]
+        GW[Payment Gateway / UPI]
+        AT[Analyst Dashboard UI]
+        OPS[MLOps / Prometheus]
+    end
+
+    subgraph Gateway["FastAPI Security & Middleware Perimeter"]
+        RL[Redis Sliding-Window Rate Limiter<br/>60 req/min]
+        RLG[Request Logger Middleware<br/>X-Request-ID Tracking]
+        JWT{JWT Bearer Auth<br/>HS256 Verification}
+    end
+
+    subgraph Routers["API Route Controllers"]
+        R1["POST /api/v1/score<br/>(Sub-10ms LightGBM)"]
+        R2["GET/POST /api/v1/cases<br/>(Dossier &amp; Feedback)"]
+        R3["GET /api/v1/cases/{id}/stream<br/>(Server-Sent Events)"]
+        R4["GET/POST /api/v1/models<br/>(Governance &amp; Rollback)"]
+        R5["GET /api/v1/health<br/>(Probes &amp; Metrics)"]
+    end
+
+    GW --> RLG --> RL --> JWT --> R1
+    AT --> RLG --> RL --> JWT --> R2 & R3 & R4
+    OPS --> RLG --> R5
+```
+
+#### Retraining Flywheel Mechanics
+When an analyst reviews a flagged case in the dashboard and submits an adjudication via `POST /api/v1/cases/{id}/feedback`:
+1. The case status is set to `RESOLVED` in `fraud_cases`.
+2. A ground-truth training sample is written to `labeled_data` linking the original feature vector to the verified label (`fraud` or `legitimate`).
+3. An SSE event `case_resolved` is broadcast to all active analyst terminals.
+
 ---
 
 ## 4. Database Schema & Entity-Relationship Model
@@ -338,9 +414,9 @@ erDiagram
 [██████████] Phase 2: Transaction Simulator & Synthetic Data (100% COMPLETE)
 [██████████] Phase 3: Streaming Feature Engine (100% COMPLETE)
 [██████████] Phase 4: Real-Time LightGBM Scoring (100% COMPLETE)
-[░░░░░░░░░░] Phase 5: LLM Investigation Assist (NEXT)
-[░░░░░░░░░░] Phase 6: FastAPI Gateway & SSE Dashboard
-[░░░░░░░░░░] Phase 7: Model Training & Evaluation Harness
+[██████████] Phase 5: LLM Investigation Assist (100% COMPLETE)
+[██████████] Phase 6: FastAPI Gateway & SSE Dashboard (100% COMPLETE)
+[░░░░░░░░░░] Phase 7: Model Training & Evaluation Harness (NEXT)
 [░░░░░░░░░░] Phase 8: LLM Fine-Tuning Pipeline (QLoRA)
 [░░░░░░░░░░] Phase 9: Model Lifecycle (Canary, Rollback, Drift Monitor)
 [░░░░░░░░░░] Phase 10: Documentation & Polish

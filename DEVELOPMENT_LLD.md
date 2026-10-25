@@ -238,6 +238,47 @@ sequenceDiagram
 | `[0.60, 0.85)` | **HIGH** | **FLAG** | Dispatch to Kafka `case.flagged` for LLM narrative |
 | `[0.85, 1.00]` | **CRITICAL** | **FLAG** | Dispatch to Kafka `case.flagged` with `URGENT` priority |
 
+### 3.5 Layer 4: LLM Investigation Narrative Assist
+
+When transactions are flagged by the real-time scoring engine (risk score $\ge 0.60$), they are routed asynchronously off the critical authorization path to the Investigation Assist pipeline.
+
+```mermaid
+flowchart TD
+    subgraph Trigger["1. Asynchronous Trigger"]
+        K[Kafka: case.flagged]
+    end
+
+    subgraph Enrich["2. 360-Degree Context Assembly"]
+        CB[CaseBuilder Engine]
+        DB[(Postgres Audit Logs)]
+        GR[Bipartite Identity Graph]
+        OFS[(Redis Online Store)]
+        
+        K --> CB
+        DB -->|Customer History & Baseline| CB
+        GR -->|Linked Accounts & Devices| CB
+        OFS -->|Raw Feature Snapshot| CB
+    end
+
+    subgraph LLM["3. Evidence-Grounded Generation"]
+        CB -->|Context Bundle JSON| AG[InvestigationAgent]
+        AG -->|System Prompt & Grounding Rules| GQ[Groq API: Llama-3-8B]
+        GQ -->|Raw Narrative with Citations| EG{EvidenceGroundingVerifier}
+    end
+
+    subgraph Verification["4. Verification & Storage"]
+        EG -->|Fidelity Score >= 0.80| OK[Verified Narrative]
+        EG -->|Fidelity Score < 0.80| FBK[Deterministic Fallback]
+        OK & FBK --> CAS[(Postgres: fraud_cases)]
+        CAS --> UI[Analyst Dashboard SSE]
+    end
+```
+
+#### Grounding Verification Formulation
+For every generated narrative, the `EvidenceGroundingVerifier` extracts bracketed citations $[Citing: \text{key}=\text{value}]$ and checks numerical proximity within a $10\%$ tolerance against the raw JSON context bundle:
+$$\text{Fidelity Score} = \frac{\sum_{i=1}^{M} \mathbb{I}(\text{claim}_i \in \text{Context Bundle})}{M}$$
+If $\text{Fidelity Score} < 0.80$, the narrative is rejected to prevent hallucinations from reaching risk analysts.
+
 ---
 
 ## 4. Database Schema & Entity-Relationship Model
@@ -338,8 +379,8 @@ erDiagram
 [██████████] Phase 2: Transaction Simulator & Synthetic Data (100% COMPLETE)
 [██████████] Phase 3: Streaming Feature Engine (100% COMPLETE)
 [██████████] Phase 4: Real-Time LightGBM Scoring (100% COMPLETE)
-[░░░░░░░░░░] Phase 5: LLM Investigation Assist (NEXT)
-[░░░░░░░░░░] Phase 6: FastAPI Gateway & SSE Dashboard
+[██████████] Phase 5: LLM Investigation Assist (100% COMPLETE)
+[░░░░░░░░░░] Phase 6: FastAPI Gateway & SSE Dashboard (NEXT)
 [░░░░░░░░░░] Phase 7: Model Training & Evaluation Harness
 [░░░░░░░░░░] Phase 8: LLM Fine-Tuning Pipeline (QLoRA)
 [░░░░░░░░░░] Phase 9: Model Lifecycle (Canary, Rollback, Drift Monitor)
