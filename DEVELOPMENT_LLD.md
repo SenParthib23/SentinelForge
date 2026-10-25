@@ -323,6 +323,40 @@ flowchart TD
    - When an analyst confirms or rejects a fraud alert, the API atomically records the human adjudication in `fraud_cases` and writes a curated sample into `labeled_data` containing the 17-feature snapshot, model risk score, and ground truth label.
    - This continuously curates high-value borderline samples for Phase 7 offline LightGBM retraining and Phase 8 QLoRA fine-tuning.
 
+### 3.7 Layer 7 & 9: Offline Model Training & Two-Gate Evaluation Harness
+
+The offline ML lifecycle continuously ingests historical data and verified human adjudications from PostgreSQL `labeled_data`, training candidate models and subjecting them to a rigorous Two-Gate evaluation showdown.
+
+```mermaid
+flowchart TD
+    subgraph DataPrep["1. Ingestion & Feature Matrix Prep"]
+        P[(Postgres labeled_data)]
+        HIST[Historical Parquet 100k]
+        DL[DataLoader]
+        FB[FeatureBuilder SSOT]
+        P & HIST --> DL --> FB
+        FB -->|Stratified 70/15/15 Split| SPLIT[Train / Val / Test Matrices]
+    end
+
+    subgraph Training["2. Cost-Sensitive Training"]
+        SPLIT -->|Train Matrix| LTB[train_lightgbm]
+        CIM[ClassImbalanceManager<br/>scale_pos_weight = N_neg / N_pos]
+        OPT[Cost-Optimal Threshold Search<br/>min Financial Loss]
+        CIM --> LTB
+        SPLIT -->|Val Matrix| OPT --> LTB
+        LTB --> CAND[Candidate Model Weights]
+    end
+
+    subgraph EvalHarness["3. Two-Gate Evaluation Harness"]
+        CAND --> G1{Gate 1: Absolute Benchmark<br/>AUC >= 0.85, PR-AUC >= 0.70<br/>Recall@1% FPR >= 0.60, Latency < 10ms}
+        G1 -->|Fail| REJ1[REJECT: Undertrained]
+        G1 -->|Pass| G2{Gate 2: Head-to-Head Regression<br/>Candidate vs Prod Champion on Held-Out Test<br/>Delta PR-AUC >= 0, Delta Rec@1% FPR >= 0}
+        PROD[Active Production Champion] --> G2
+        G2 -->|Any Metric Regressed| REJ2[BLOCKED: Production Safeguard]
+        G2 -->|All Metrics >= Prod| APP[APPROVED FOR PROMOTION]
+    end
+```
+
 ---
 
 ## 4. Database Schema & Entity-Relationship Model
@@ -425,8 +459,8 @@ erDiagram
 [██████████] Phase 4: Real-Time LightGBM Scoring (100% COMPLETE)
 [██████████] Phase 5: LLM Investigation Assist (100% COMPLETE)
 [██████████] Phase 6: FastAPI Gateway & SSE Dashboard (100% COMPLETE)
-[░░░░░░░░░░] Phase 7: Model Training & Evaluation Harness (NEXT)
-[░░░░░░░░░░] Phase 8: LLM Fine-Tuning Pipeline (QLoRA)
+[██████████] Phase 7: Model Training & Evaluation Harness (100% COMPLETE)
+[░░░░░░░░░░] Phase 8: LLM Fine-Tuning Pipeline (QLoRA) (NEXT)
 [░░░░░░░░░░] Phase 9: Model Lifecycle (Canary, Rollback, Drift Monitor)
 [░░░░░░░░░░] Phase 10: Documentation & Polish
 ```
