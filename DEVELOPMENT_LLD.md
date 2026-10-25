@@ -279,6 +279,50 @@ For every generated narrative, the `EvidenceGroundingVerifier` extracts brackete
 $$\text{Fidelity Score} = \frac{\sum_{i=1}^{M} \mathbb{I}(\text{claim}_i \in \text{Context Bundle})}{M}$$
 If $\text{Fidelity Score} < 0.80$, the narrative is rejected to prevent hallucinations from reaching risk analysts.
 
+### 3.6 Layer 5 & 6: FastAPI Gateway & Real-Time SSE Analyst Cockpit
+
+The API gateway is built on **FastAPI** and serves as the unified nervous system connecting payment rails, human fraud investigators, and continuous model governance tools.
+
+```mermaid
+flowchart TD
+    subgraph Clients["Inbound Traffic"]
+        GW[Payment Gateway / UPI Rails]
+        AT[Analyst Dashboard UI / Browser]
+        OPS[MLOps / Prometheus Scraper]
+    end
+
+    subgraph Gateway["FastAPI Security & Middleware Perimeter (:8000)"]
+        RLG[Request Logger Middleware<br/>X-Request-ID Tracing & Latency]
+        RL[Redis Sliding-Window Rate Limiter<br/>60 req/min per Client IP]
+        JWT{JWT Bearer Auth<br/>HS256 Verification}
+    end
+
+    subgraph Routers["API Route Controllers"]
+        R1["POST /api/v1/score<br/>(Sub-10ms LightGBM)"]
+        R2["GET/POST /api/v1/cases<br/>(Dossier & Analyst Feedback)"]
+        R3["GET /api/v1/cases/stream/live<br/>(Server-Sent Events)"]
+        R4["GET/POST /api/v1/models<br/>(Governance & Rollback)"]
+        R5["GET /api/v1/health<br/>(Readiness Probes & Metrics)"]
+        R6["GET / & /dashboard<br/>(Glassmorphic Dark Cockpit UI)"]
+    end
+
+    GW --> RLG --> RL --> JWT --> R1
+    AT --> RLG --> RL --> JWT --> R2 & R3 & R4
+    AT --> R6
+    OPS --> RLG --> R5
+```
+
+#### Key Architecture Principles & Flow:
+1. **Synchronous Payment Authorization Path (`POST /api/v1/score`)**:
+   - Executes sub-10ms LightGBM scoring against online Redis features.
+   - If the score crosses the alert threshold ($\ge 0.60$), an async background task is dispatched off the critical path to build 360° context, trigger Groq Llama-3-8B evidence narrative generation, and broadcast live milestones via SSE.
+2. **Real-Time SSE Analyst Cockpit (`GET /` & `GET /api/v1/cases/stream/live`)**:
+   - Glassmorphic dark UI (`services/dashboard/static/index.html`) featuring real-time pulse monitoring, live latency gauges, attack simulation controls (ATO velocity burst, impossible travel, mule syndicates), and 17 tabular behavioral feature visualizers.
+   - Formatted AI investigation narratives with glowing evidence citations `[Citing: key=value]` and grounding fidelity meters.
+3. **Closing the Retraining Flywheel (`POST /api/v1/cases/{id}/feedback`)**:
+   - When an analyst confirms or rejects a fraud alert, the API atomically records the human adjudication in `fraud_cases` and writes a curated sample into `labeled_data` containing the 17-feature snapshot, model risk score, and ground truth label.
+   - This continuously curates high-value borderline samples for Phase 7 offline LightGBM retraining and Phase 8 QLoRA fine-tuning.
+
 ---
 
 ## 4. Database Schema & Entity-Relationship Model
@@ -380,8 +424,8 @@ erDiagram
 [██████████] Phase 3: Streaming Feature Engine (100% COMPLETE)
 [██████████] Phase 4: Real-Time LightGBM Scoring (100% COMPLETE)
 [██████████] Phase 5: LLM Investigation Assist (100% COMPLETE)
-[░░░░░░░░░░] Phase 6: FastAPI Gateway & SSE Dashboard (NEXT)
-[░░░░░░░░░░] Phase 7: Model Training & Evaluation Harness
+[██████████] Phase 6: FastAPI Gateway & SSE Dashboard (100% COMPLETE)
+[░░░░░░░░░░] Phase 7: Model Training & Evaluation Harness (NEXT)
 [░░░░░░░░░░] Phase 8: LLM Fine-Tuning Pipeline (QLoRA)
 [░░░░░░░░░░] Phase 9: Model Lifecycle (Canary, Rollback, Drift Monitor)
 [░░░░░░░░░░] Phase 10: Documentation & Polish
