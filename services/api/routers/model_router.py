@@ -15,7 +15,10 @@ from typing import Annotated, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+from ml.monitoring.drift_detector import DriftDetector
 from services.api.dependencies import get_current_user
+from services.scoring.auto_rollback import AutoRollbackManager, get_rollback_manager
+from services.scoring.canary_router import CanaryRouter, get_canary_router
 from services.scoring.model_loader import ModelLoader, get_model_loader
 from shared.config.settings import Settings, get_settings
 from shared.db.postgres import PostgresClient, get_postgres_client
@@ -25,6 +28,14 @@ from shared.models.model_version import ModelStatus, ModelVersion
 logger = get_logger("api.models")
 
 model_router = APIRouter(prefix="/api/v1/models", tags=["Model Lifecycle & Governance"])
+
+
+class CanarySplitRequest(BaseModel):
+    """Payload to configure dynamic canary traffic routing."""
+
+    canary_percentage: float = Field(..., ge=0.0, le=100.0, description="Percentage of traffic [0-100]")
+    canary_version: Optional[str] = Field(default="candidate_v2", description="Candidate version tag")
+    shadow_mode: bool = Field(default=False, description="Run candidate asynchronously without auth impact")
 
 
 class PromotionRequest(BaseModel):
@@ -74,6 +85,43 @@ async def list_models(
             promoted_at=datetime.now(timezone.utc),
         )
     ]
+
+
+@model_router.post(
+    "/canary/split",
+    summary="Configure real-time canary traffic split percentage",
+)
+async def configure_canary_split(
+    payload: CanarySplitRequest,
+    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
+) -> dict[str, Any]:
+    """
+    Adjust dynamic traffic split between Champion and Canary models.
+    """
+    router = get_canary_router()
+    result = router.update_split(
+        canary_percentage=payload.canary_percentage,
+        canary_version=payload.canary_version,
+        shadow_mode=payload.shadow_mode,
+    )
+    return {
+        "status": "updated",
+        "configuration": result,
+    }
+
+
+@model_router.get(
+    "/canary/status",
+    summary="Get current canary health, latency percentiles, and traffic split",
+)
+async def get_canary_status(
+    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
+) -> dict[str, Any]:
+    """
+    Retrieve live health report from AutoRollbackManager.
+    """
+    mgr = get_rollback_manager()
+    return mgr.get_status_report()
 
 
 @model_router.get(
@@ -143,6 +191,11 @@ async def rollback_model(
     """
     logger.warning("Emergency model rollback initiated", model=name, target=payload.target_version, reason=payload.reason)
     target = payload.target_version or "baseline_v1"
+
+    # Reset canary router traffic to 100% champion
+    canary_router = get_canary_router()
+    canary_router.reset_to_champion()
+
     success = model_loader.reload_model(target)
 
     if not success:

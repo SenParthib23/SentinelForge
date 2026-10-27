@@ -377,6 +377,32 @@ flowchart TD
     end
 ```
 
+### 3.9 Layer 10 & 11: Model Lifecycle (Canary Rollouts, Auto-Rollback & Continuous Drift Monitoring)
+
+Safeguards live production payment authorization traffic via dynamic sticky customer traffic splitting, automated SLA circuit breakers, and continuous statistical data drift detection.
+
+```mermaid
+flowchart TD
+    subgraph TrafficControl["1. Dynamic Canary Traffic Split"]
+        TXN[Incoming Transaction Request] --> CR[CanaryRouter]
+        CR -->|MD5 cust_id mod 100 < P_canary| CAN[Canary Candidate]
+        CR -->|Default >= P_canary| CHAMP[Production Champion]
+    end
+
+    subgraph CircuitBreaker["2. Automated Rollback Circuit Breaker"]
+        CAN -->|Execution Metrics| AR[AutoRollbackManager]
+        AR -->|p99 > 10ms OR Error > 0.5% OR Flag > 3x Base| TRIP{Circuit Breaker Tripped?}
+        TRIP -->|YES| ROLL[Atomic Rollback: Split -> 0%<br/>Broadcast SSE Alert]
+        TRIP -->|NO| OK[Traffic Normal]
+    end
+
+    subgraph DriftObservability["3. Continuous Drift Detection"]
+        REF[(Reference Baseline Distribution)] & STREAM[(Streaming Window)] --> DD[DriftDetector]
+        DD -->|PSI >= 0.25| RETRAIN[Trigger Automated Retraining Recommendation]
+        DD -->|PSI < 0.10| HEALTHY[Distribution Stable]
+    end
+```
+
 ---
 
 ## 4. Database Schema & Entity-Relationship Model
@@ -481,6 +507,6 @@ erDiagram
 [██████████] Phase 6: FastAPI Gateway & SSE Dashboard (100% COMPLETE)
 [██████████] Phase 7: Model Training & Evaluation Harness (100% COMPLETE)
 [██████████] Phase 8: LLM Fine-Tuning Pipeline (QLoRA) (100% COMPLETE)
-[░░░░░░░░░░] Phase 9: Model Lifecycle (Canary, Rollback, Drift Monitor) (NEXT)
-[░░░░░░░░░░] Phase 10: Documentation & Polish
+[██████████] Phase 9: Model Lifecycle (Canary, Rollback, Drift Monitor) (100% COMPLETE)
+[░░░░░░░░░░] Phase 10: Documentation & Polish (NEXT)
 ```
